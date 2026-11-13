@@ -1,0 +1,80 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WindSight Analytics — LOCAL DEVELOPMENT
+#
+# Usage:
+#   docker compose up --build          # first run
+#   docker compose up                  # subsequent runs
+#   docker compose down                # stop and remove containers
+#   docker compose logs -f backend     # follow backend logs
+#
+# URLs:
+#   Frontend:  http://localhost:5173   (Vite dev server with HMR)
+#   Backend:   http://localhost:8000
+#   API docs:  http://localhost:8000/docs
+#   Health:    http://localhost:8000/api/health
+#
+# Backend fetches data from Elexon BMRS at startup (~5–10 seconds).
+# Wait for "Application startup complete." in the backend logs before testing.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── FastAPI backend ─────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: windsight_backend
+    ports:
+      - "8000:8000"
+    env_file:
+      # Copy backend/.env.example to backend/.env and adjust
+      # The app works without .env — all values have sensible defaults
+      - path: ./backend/.env
+        required: false
+    environment:
+      - CORS_ORIGINS=http://localhost:5173,http://localhost:3000,http://localhost
+      - DEFAULT_CUTOFF_HOUR_UTC=9
+      - ELEXON_BASE_URL=https://data.elexon.co.uk/bmrs/api/v1
+      - ELEXON_TIMEOUT_SECONDS=60.0
+      - ELEXON_MAX_RETRIES=3
+      - LOG_LEVEL=info
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - windsight
+
+  # ── React frontend — Vite dev server with hot reload ────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: windsight_frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - /app/node_modules # prevent host node_modules from shadowing container
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - windsight
+
+networks:
+  windsight:
+    driver: bridge
